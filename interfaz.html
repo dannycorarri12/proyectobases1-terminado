@@ -10,7 +10,6 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-        /* Estilos para el scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
         }
@@ -24,7 +23,6 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #64748b;
         }
-        /* Clases para transiciones suaves */
         .view {
             display: none;
             animation: fadeIn 0.5s;
@@ -51,7 +49,6 @@
         #toast.show {
             bottom: 20px;
         }
-        /* Estilos para el Modal */
         #edit-modal.hidden {
             display: none;
         }
@@ -61,7 +58,6 @@
     <div id="toast" class=""></div>
 
     <div class="flex h-screen">
-        <!-- BARRA LATERAL -->
         <aside class="w-64 bg-slate-800 text-slate-300 p-6 flex flex-col">
             <h1 class="text-2xl font-bold text-white mb-8">Clubes de Lectura</h1>
             <nav class="flex flex-col space-y-2">
@@ -84,10 +80,8 @@
             </nav>
         </aside>
 
-        <!-- CONTENIDO PRINCIPAL -->
         <main class="flex-1 p-8 overflow-y-auto">
             
-            <!-- VISTA: Dashboard -->
             <div id="dashboard" class="view">
                 <h1 class="text-3xl font-bold mb-6">Dashboard</h1>
                 <div class="bg-white p-6 rounded-lg shadow">
@@ -103,29 +97,23 @@
                             Carga Manual (desde mi PC)
                         </button>
                     </div>
-                    <!-- Input de archivo oculto para la carga manual -->
                     <input type="file" id="manual-upload-input" multiple accept=".csv" class="hidden">
                 </div>
             </div>
 
-            <!-- VISTAS DE MANTENIMIENTO -->
             <div id="mantenimiento-persona" class="view"></div>
             <div id="mantenimiento-autor" class="view"></div>
             <div id="mantenimiento-libro" class="view"></div>
             <div id="mantenimiento-club" class="view"></div>
-
-            <!-- VISTAS DE RELACIONES -->
             <div id="relaciones-autoria" class="view"></div>
             <div id="relaciones-membresia" class="view"></div>
             <div id="relaciones-lectura" class="view"></div>
             <div id="relaciones-recomendacion" class="view"></div>
 
-            <!-- VISTA DE CONSULTAS -->
             <div id="consultas" class="view"></div>
         </main>
     </div>
 
-    <!-- MODAL DE EDICIÓN -->
     <div id="edit-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
         <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md animate-fadeIn">
             <div class="flex justify-between items-center mb-4">
@@ -148,7 +136,6 @@
             const API_BASE_URL = 'http://localhost:5000';
             let currentData = {};
 
-            // --- NAVEGACIÓN ---
             const navLinks = document.querySelectorAll('.nav-link');
             const views = document.querySelectorAll('.view');
 
@@ -178,7 +165,6 @@
                 });
             });
 
-            // --- LÓGICA DE VISTAS ---
             function renderView(hash) {
                 const viewId = hash.substring(1);
                 if (viewId.startsWith('mantenimiento-')) {
@@ -190,7 +176,6 @@
                 }
             }
             
-            // --- MANEJO DE NOTIFICACIONES (TOAST) ---
             const toast = document.getElementById('toast');
             function showToast(message, isError = false) {
                 toast.textContent = message;
@@ -199,7 +184,6 @@
                 setTimeout(() => toast.classList.remove('show'), 4000);
             }
 
-            // --- LÓGICA DE CARGA DE DATOS ---
             document.getElementById('auto-load-data-btn').addEventListener('click', async () => {
                 if (!confirm('Carga Automática: ¿Estás seguro de que deseas borrar y recargar todos los datos?')) return;
                 try {
@@ -243,11 +227,10 @@
                 } catch (error) {
                     showToast(`Error en carga manual: ${error.message}`, true);
                 } finally {
-                    manualUploadInput.value = ''; // Reset input
+                    manualUploadInput.value = '';
                 }
             });
 
-            // --- VISTA DE MANTENIMIENTO ---
             async function renderMaintenanceView(entity) {
                 const container = document.getElementById(`mantenimiento-${entity}`);
                 if (!container) return;
@@ -321,19 +304,20 @@
                     const response = await fetch(`${API_BASE_URL}/${getPlural(entity)}`);
                     if (!response.ok) throw new Error('No se pudo conectar al servidor.');
                     const data = await response.json();
-                    currentData[entity] = data; // Guardar datos para edición
+                    currentData[entity] = data;
 
                     if (data.length === 0) {
                         tableContainer.innerHTML = '<p class="text-slate-500">No hay datos para mostrar.</p>';
                         return;
                     }
 
-                    const headers = [...Object.keys(config.fields), 'acciones'];
+                    const headers = ['id', ...Object.keys(config.fields), 'acciones'];
                     const tableHeaders = headers.map(h => `<th class="p-3 text-left text-xs font-semibold text-slate-500 uppercase">${h.replace(/([A-Z])/g, ' $1')}</th>`).join('');
                     
                     const identifierProperty = getIdentifierProperty(entity);
                     const tableRows = data.map(item => `
                         <tr class="border-b border-slate-200">
+                            <td class="p-3 text-sm">${item.id ?? ''}</td>
                             ${Object.keys(config.fields).map(h => `<td class="p-3 text-sm">${item[h] || ''}</td>`).join('')}
                             <td class="p-3 text-sm">
                                 <button class="edit-btn bg-blue-500 text-white px-3 py-1 text-xs font-semibold rounded-md hover:bg-blue-600"
@@ -361,13 +345,16 @@
                 return pluralMap[singular] || `${singular}s`;
             }
 
-            // --- LÓGICA DEL MODAL DE EDICIÓN ---
             const editModal = document.getElementById('edit-modal');
             const editModalTitle = document.getElementById('edit-modal-title');
             const editForm = document.getElementById('edit-form');
             const editFormFields = document.getElementById('edit-form-fields');
 
             function getIdentifierProperty(entity) {
+                return 'id';
+            }
+
+            function getDisplayProperty(entity) {
                 const map = { persona: 'nombreCompleto', autor: 'nombreCompleto', libro: 'titulo', club: 'nombre' };
                 return map[entity];
             }
@@ -389,22 +376,26 @@
                 };
                 const config = entityConfig[entity];
                 const identifierProperty = getIdentifierProperty(entity);
-                const itemToEdit = currentData[entity].find(item => item[identifierProperty] === identifier);
+                const itemToEdit = currentData[entity].find(item => String(item[identifierProperty]) === String(identifier));
 
                 if (!itemToEdit) return showToast('No se encontró el elemento para editar.', true);
 
                 editModalTitle.textContent = `Editar ${entity.charAt(0).toUpperCase() + entity.slice(1)}`;
-                editFormFields.innerHTML = Object.entries(config.fields).map(([name, type]) => {
-                    const isIdentifier = (name === identifierProperty);
-                    return `
+                const idField = `
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-slate-600">ID</label>
+                        <input type="text" name="id" value="${itemToEdit.id ?? ''}" readonly
+                               class="mt-1 block w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-md shadow-sm cursor-not-allowed">
+                    </div>
+                `;
+                const otherFields = Object.entries(config.fields).map(([name, type]) => `
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-slate-600 capitalize">${name.replace(/([A-Z])/g, ' $1')}</label>
-                            <input type="${type}" name="${name}" value="${itemToEdit[name] || ''}"
-                                   ${isIdentifier ? 'readonly' : 'required'}
-                                   class="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 ${isIdentifier ? 'bg-slate-100 cursor-not-allowed' : ''}">
+                            <input type="${type}" name="${name}" value="${itemToEdit[name] || ''}" required
+                                   class="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         </div>
-                    `;
-                }).join('');
+                `).join('');
+                editFormFields.innerHTML = idField + otherFields;
 
                 editForm.dataset.entity = entity;
                 editForm.dataset.identifier = identifier;
@@ -452,7 +443,6 @@
                 }
             });
 
-            // --- VISTA DE RELACIONES ---
             async function renderRelacionesView(type) {
                 const container = document.getElementById(`relaciones-${type}`);
                 if (!container) return;
@@ -496,14 +486,14 @@
                     ]);
                     const fromData = await fromResponse.json();
                     const toData = await toResponse.json();
-                    const fromIdentifier = getIdentifierProperty(config.from);
-                    const toIdentifier = getIdentifierProperty(config.to);
+                    const fromDisplay = getDisplayProperty(config.from);
+                    const toDisplay = getDisplayProperty(config.to);
 
-                    document.getElementById(`from-${type}-select`).innerHTML = fromData.map(item => `<option value="${item[fromIdentifier]}">${item[fromIdentifier]}</option>`).join('');
+                    document.getElementById(`from-${type}-select`).innerHTML = fromData.map(item => `<option value="${item.id}">${item[fromDisplay]}</option>`).join('');
                     document.getElementById(`to-${type}-options`).innerHTML = toData.map(item => `
                         <label class="flex items-center">
-                            <input type="checkbox" name="to" value="${item[toIdentifier]}" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                            <span class="ml-2 text-sm text-slate-700">${item[toIdentifier]}</span>
+                            <input type="checkbox" name="to" value="${item.id}" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <span class="ml-2 text-sm text-slate-700">${item[toDisplay]}</span>
                         </label>
                     `).join('');
                 } catch (error) {
@@ -537,7 +527,6 @@
                 });
             }
 
-            // --- VISTA DE CONSULTAS ---
             async function renderConsultasView() {
                 const container = document.getElementById('consultas');
                 if (!container) return;
@@ -668,12 +657,9 @@
                 `;
             }
 
-            // --- INICIALIZACIÓN ---
             const initialHash = location.hash || '#dashboard';
             navigateTo(initialHash);
         });
     </script>
 </body>
 </html>
-
-
