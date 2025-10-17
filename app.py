@@ -1,20 +1,13 @@
-# --------------------------------------------------------------------------
-# 1. IMPORTACIONES
-# --------------------------------------------------------------------------
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from db import Database
 import logging
 
-# --------------------------------------------------------------------------
-# 2. CONFIGURACIÓN INICIAL
-# --------------------------------------------------------------------------
 app = Flask(__name__, static_folder='public', static_url_path='')
 CORS(app)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- CONFIGURACIÓN DE LA BASE DE DATOS ---
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "12345678"  
@@ -32,16 +25,10 @@ except Exception as e:
     logging.error(f"No se pudo conectar a Neo4j: {e}")
     db = None
 
-# --------------------------------------------------------------------------
-# 3. RUTA PARA SERVIR EL FRONTEND
-# --------------------------------------------------------------------------
 @app.route('/')
 def serve_index():
     return send_from_directory(app.static_folder, 'interfaz.html')
 
-# --------------------------------------------------------------------------
-# 4. RUTAS DE LA API
-# --------------------------------------------------------------------------
 ENTITY_MAP = {
     "personas": "persona",
     "libros": "libro",
@@ -100,7 +87,6 @@ def update_entity(entity, identifier):
         logging.error(f"Error al actualizar {entity} '{identifier}': {e}")
         return jsonify({"error": f"Error interno al actualizar {entity}"}), 500
 
-# --- Rutas de Relaciones ---
 @app.route('/relaciones/<tipo_relacion>', methods=['POST'])
 def crear_relacion(tipo_relacion):
     if not db: return jsonify({"error": "La base de datos no está disponible."}), 500
@@ -116,7 +102,6 @@ def crear_relacion(tipo_relacion):
         logging.error(f"Error al crear relación '{tipo_relacion}': {e}")
         return jsonify({"error": "Error interno al crear las relaciones."}), 500
 
-# --- Rutas de Consultas ---
 @app.route('/consultas/libros-leidos', methods=['GET'])
 def get_libros_leidos():
     if not db: return jsonify({"error": "La base de datos no está disponible."}), 500
@@ -171,7 +156,6 @@ def get_libros_populares():
         logging.error(f"Error en consulta 'libros populares': {e}")
         return jsonify({"error": "Error al procesar la consulta."}), 500
 
-# --- Rutas de Administración ---
 @app.route('/admin/cargar-datos', methods=['POST'])
 def cargar_datos_iniciales():
     if not db: return jsonify({"error": "La base de datos no está disponible."}), 500
@@ -196,8 +180,6 @@ def cargar_datos_manuales():
     for file in files:
         if file.filename == '': continue
         try:
-            # -------- ¡ESTA ES LA LÍNEA CORREGIDA! --------
-            # Usar 'utf-8-sig' para manejar correctamente el BOM (caracter invisible)
             content = file.stream.read().decode("utf-8-sig")
             file_contents[file.filename] = content
         except Exception as e:
@@ -211,8 +193,6 @@ def cargar_datos_manuales():
         logging.error(f"Error en la carga manual de datos: {e}")
         return jsonify({"error": f"Error masivo al procesar archivos: {e}"}), 500
 
-# --------------------------------------------------------------------------
-# 5. INICIO DE LA APLICACIÓN
-# --------------------------------------------------------------------------
 if __name__ == '__main__':
     app.run(debug=True)
+
