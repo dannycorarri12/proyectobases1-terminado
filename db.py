@@ -53,41 +53,53 @@ class Database:
             return []
         capitalized_label = entity_label.capitalize()
         entity_details = {
-            'Persona': {'props': ['nombreCompleto', 'tipoLector'], 'id': 'nombreCompleto'},
-            'Libro': {'props': ['titulo', 'generoLiterario', 'añoPublicacion'], 'id': 'titulo'},
-            'Autor': {'props': ['nombreCompleto', 'nacionalidad'], 'id': 'nombreCompleto'},
-            'Club': {'props': ['nombre', 'ubicacion', 'tematica'], 'id': 'nombre'}
+            'Persona': {'props': ['id', 'nombreCompleto', 'tipoLector'], 'order': 'id'},
+            'Libro': {'props': ['id', 'titulo', 'generoLiterario', 'añoPublicacion'], 'order': 'id'},
+            'Autor': {'props': ['id', 'nombreCompleto', 'nacionalidad'], 'order': 'id'},
+            'Club': {'props': ['id', 'nombre', 'ubicacion', 'tematica'], 'order': 'id'}
         }
         details = entity_details[capitalized_label]
         props_to_return = ', '.join([f'n.{prop} AS {prop}' for prop in details['props']])
-        identifier = details['id']
-        query = f"MATCH (n:{capitalized_label}) RETURN {props_to_return} ORDER BY n.{identifier}"
+        order_prop = details['order']
+        query = f"MATCH (n:{capitalized_label}) RETURN {props_to_return} ORDER BY n.{order_prop}"
         return self._execute_query(query)
 
     def add_node(self, entity_label, properties):
         allowed_labels = ['persona', 'libro', 'autor', 'club']
-        if entity_label.lower() not in allowed_labels: raise ValueError("Etiqueta no válida.")
+        if entity_label.lower() not in allowed_labels:
+            raise ValueError("Etiqueta no válida.")
         capitalized_label = entity_label.capitalize()
-        set_clauses = ', '.join([f"n.{key} = ${key}" for key in properties.keys()])
-        query = f"CREATE (n:{capitalized_label}) SET {set_clauses}"
+        props = dict(properties)
+        if 'id' not in props or props['id'] in (None, ""):
+            try:
+                result = self._execute_query(
+                    f"MATCH (n:{capitalized_label}) RETURN coalesce(max(n.id), 0) + 1 AS nextId"
+                )
+                next_id = result[0]['nextId'] if result else 1
+            except Exception:
+                next_id = 1
+            props['id'] = int(next_id)
+        query = f"CREATE (n:{capitalized_label}) SET n += $props"
         with self._get_session() as session:
-            session.execute_write(self._execute_write, query, properties)
+            session.execute_write(self._execute_write, query, {"props": props})
     
     def get_identifier_property(self, entity_label):
-        capitalized_label = entity_label.capitalize()
-        if capitalized_label == "Libro": return "titulo"
-        elif capitalized_label == "Club": return "nombre"
-        return "nombreCompleto"
+        return "id"
 
     def update_node(self, entity_label, identifier, properties):
         allowed_labels = ['persona', 'libro', 'autor', 'club']
-        if entity_label.lower() not in allowed_labels: raise ValueError("Etiqueta no válida.")
+        if entity_label.lower() not in allowed_labels:
+            raise ValueError("Etiqueta no válida.")
         capitalized_label = entity_label.capitalize()
-        id_property = self.get_identifier_property(entity_label)
-        properties.pop(id_property, None)
+        properties.pop('id', None)
         set_clauses = ', '.join([f"n.{key} = ${key}" for key in properties.keys()])
-        if not set_clauses: return
-        query = f"MATCH (n:{capitalized_label} {{{id_property}: $identifier}}) SET {set_clauses}"
+        if not set_clauses:
+            return
+        query = (
+            f"MATCH (n:{capitalized_label}) "
+            f"WHERE toString(n.id) = toString($identifier) "
+            f"SET {set_clauses}"
+        )
         parameters = {"identifier": identifier, **properties}
         with self._get_session() as session:
             session.execute_write(self._execute_write, query, parameters)
@@ -103,10 +115,10 @@ class Database:
         config = relaciones_map[tipo_relacion]
         query = f"""
         MATCH (a:{config['from_label']})
-        WHERE toString(a.csvId) = toString($from_id) OR a.{config['from_prop']} = $from_id
+        WHERE toString(a.id) = toString($from_id) OR a.{config['from_prop']} = $from_id
         UNWIND $to_ids AS to_id
         MATCH (b:{config['to_label']})
-        WHERE toString(b.csvId) = toString(to_id) OR b.{config['to_prop']} = to_id
+        WHERE toString(b.id) = toString(to_id) OR b.{config['to_prop']} = to_id
         MERGE (a)-[:{config['rel_type']}]->(b)
         """
         parameters = {"from_id": from_node_id, "to_ids": to_node_ids}
@@ -119,14 +131,14 @@ class Database:
             logging.info("Carga Automática: Base de datos anterior eliminada.")
             self._crear_esquema(session)
             queries_load = [
-                "LOAD CSV WITH HEADERS FROM 'file:///Persona.csv' AS row FIELDTERMINATOR ';' CREATE (p:Persona {nombreCompleto: row.Nombre, tipoLector: row.TipoLector, csvId: toInteger(row.id)})",
-                "LOAD CSV WITH HEADERS FROM 'file:///Autor.csv' AS row FIELDTERMINATOR ';' CREATE (a:Autor {nombreCompleto: row.Nombre, nacionalidad: row.Nacionalidad, csvId: toInteger(row.idAutor)})",
-                "LOAD CSV WITH HEADERS FROM 'file:///Libro.csv' AS row FIELDTERMINATOR ';' CREATE (l:Libro {titulo: row.Titulo, generoLiterario: row.Genero, añoPublicacion: toInteger(row.Anno), csvId: toInteger(row.IdLibro)})",
-                "LOAD CSV WITH HEADERS FROM 'file:///Club.csv' AS row FIELDTERMINATOR ';' CREATE (c:Club {nombre: row.Nombre, ubicacion: row.Ubicacion, tematica: row.Tematica, csvId: toInteger(row.IdClub)})",
-                "LOAD CSV WITH HEADERS FROM 'file:///Autor-libro.csv' AS row FIELDTERMINATOR ';' MATCH (a:Autor {csvId: toInteger(row.idAutor)}) MATCH (l:Libro {csvId: toInteger(row.idLibro)}) MERGE (a)-[:ESCRIBIO]->(l)",
-                "LOAD CSV WITH HEADERS FROM 'file:///Persona-libro.csv' AS row FIELDTERMINATOR ';' MATCH (p:Persona {csvId: toInteger(row.id)}) MATCH (l:Libro {csvId: toInteger(row.idLibro)}) MERGE (p)-[:LEE]->(l)",
-                "LOAD CSV WITH HEADERS FROM 'file:///Club-libro.csv' AS row FIELDTERMINATOR ';' MATCH (c:Club {csvId: toInteger(row.idClub)}) MATCH (l:Libro {csvId: toInteger(row.idLibro)}) MERGE (c)-[:RECOMIENDA]->(l)",
-                "LOAD CSV WITH HEADERS FROM 'file:///Persona-club2.csv' AS row FIELDTERMINATOR ';' MATCH (p:Persona {csvId: toInteger(row.idPersona)}) MATCH (c:Club {csvId: toInteger(row.idClub)}) MERGE (p)-[:PERTENECE_A]->(c)"
+                "LOAD CSV WITH HEADERS FROM 'file:///Persona.csv' AS row FIELDTERMINATOR ';' CREATE (p:Persona {id: toInteger(row.id), nombreCompleto: row.Nombre, tipoLector: row.TipoLector})",
+                "LOAD CSV WITH HEADERS FROM 'file:///Autor.csv' AS row FIELDTERMINATOR ';' CREATE (a:Autor {id: toInteger(row.idAutor), nombreCompleto: row.Nombre, nacionalidad: row.Nacionalidad})",
+                "LOAD CSV WITH HEADERS FROM 'file:///Libro.csv' AS row FIELDTERMINATOR ';' CREATE (l:Libro {id: toInteger(row.IdLibro), titulo: row.Titulo, generoLiterario: row.Genero, añoPublicacion: toInteger(row.Anno)})",
+                "LOAD CSV WITH HEADERS FROM 'file:///Club.csv' AS row FIELDTERMINATOR ';' CREATE (c:Club {id: toInteger(row.IdClub), nombre: row.Nombre, ubicacion: row.Ubicacion, tematica: row.Tematica})",
+                "LOAD CSV WITH HEADERS FROM 'file:///Autor-libro.csv' AS row FIELDTERMINATOR ';' MATCH (a:Autor {id: toInteger(row.idAutor)}) MATCH (l:Libro {id: toInteger(row.idLibro)}) MERGE (a)-[:ESCRIBIO]->(l)",
+                "LOAD CSV WITH HEADERS FROM 'file:///Persona-libro.csv' AS row FIELDTERMINATOR ';' MATCH (p:Persona {id: toInteger(row.id)}) MATCH (l:Libro {id: toInteger(row.idLibro)}) MERGE (p)-[:LEE]->(l)",
+                "LOAD CSV WITH HEADERS FROM 'file:///Club-libro.csv' AS row FIELDTERMINATOR ';' MATCH (c:Club {id: toInteger(row.idClub)}) MATCH (l:Libro {id: toInteger(row.idLibro)}) MERGE (c)-[:RECOMIENDA]->(l)",
+                "LOAD CSV WITH HEADERS FROM 'file:///Persona-club2.csv' AS row FIELDTERMINATOR ';' MATCH (p:Persona {id: toInteger(row.idPersona)}) MATCH (c:Club {id: toInteger(row.idClub)}) MERGE (p)-[:PERTENECE_A]->(c)"
             ]
             for query in queries_load:
                 session.execute_write(self._execute_write, query)
@@ -138,10 +150,10 @@ class Database:
             "CREATE CONSTRAINT persona_nombre IF NOT EXISTS FOR (p:Persona) REQUIRE p.nombreCompleto IS UNIQUE",
             "CREATE CONSTRAINT libro_titulo IF NOT EXISTS FOR (l:Libro) REQUIRE l.titulo IS UNIQUE",
             "CREATE CONSTRAINT autor_nombre IF NOT EXISTS FOR (a:Autor) REQUIRE a.nombreCompleto IS UNIQUE",
-            "CREATE INDEX persona_csv_id IF NOT EXISTS FOR (p:Persona) ON (p.csvId)",
-            "CREATE INDEX libro_csv_id IF NOT EXISTS FOR (l:Libro) ON (l.csvId)",
-            "CREATE INDEX autor_csv_id IF NOT EXISTS FOR (a:Autor) ON (a.csvId)",
-            "CREATE INDEX club_csv_id IF NOT EXISTS FOR (c:Club) ON (c.csvId)"
+            "CREATE INDEX persona_id IF NOT EXISTS FOR (p:Persona) ON (p.id)",
+            "CREATE INDEX libro_id IF NOT EXISTS FOR (l:Libro) ON (l.id)",
+            "CREATE INDEX autor_id IF NOT EXISTS FOR (a:Autor) ON (a.id)",
+            "CREATE INDEX club_id IF NOT EXISTS FOR (c:Club) ON (c.id)"
         ]
         for query in queries_indices:
             session.execute_write(self._execute_write, query)
@@ -156,7 +168,6 @@ class Database:
             return ";"
         if "," in first_line:
             return ","
-        # Valor por defecto: tabulación, ya que los archivos del proyecto usan tabs
         return "\t"
 
     def cargar_datos_manualmente(self, file_contents):
@@ -194,27 +205,24 @@ class Database:
                 headers = set(header_map.keys())
                 logging.info(f"Carga Manual: Encabezados detectados en {filename}: {list(header_map.values())}")
 
-                # --- Detección y carga de nodos por encabezados ---
                 if {'id', 'nombre', 'tipolector'} <= headers:
                     label = 'Persona'
                     for row in reader:
                         try:
                             raw_id = row[header_map['id']]
-                            csv_id = safe_int(raw_id)
+                            node_id = safe_int(raw_id)
                             props = {
+                                'id': node_id,
                                 'nombreCompleto': row[header_map['nombre']],
-                                'tipoLector': row[header_map['tipolector']],
-                                # Guardar también el ID original para fallbacks en relaciones
-                                'id': raw_id
+                                'tipoLector': row[header_map['tipolector']]
                             }
-                            if csv_id is not None:
-                                props['csvId'] = csv_id
-                            else:
-                                logging.warning(f"Carga Manual: Persona con id no numérico '{raw_id}' en {filename}. Se crea sin csvId.")
+                            if node_id is None:
+                                logging.warning(f"Carga Manual: Persona con id no numérico '{raw_id}' en {filename}. Omitida.")
+                                continue
                         except Exception as e:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} ({label}): {e}")
                             continue
-                        query = f"MERGE (n:{label} {{nombreCompleto: $props.nombreCompleto}}) SET n += $props"
+                        query = f"MERGE (n:{label} {{id: $props.id}}) SET n += $props"
                         session.execute_write(self._execute_write, query, {'props': props})
                         created_summary[label] += 1
                     logging.info(f"Carga Manual: Nodos '{label}' procesados desde {filename}: {created_summary[label]}")
@@ -225,21 +233,19 @@ class Database:
                     for row in reader:
                         try:
                             raw_id = row[header_map['idautor']]
-                            csv_id = safe_int(raw_id)
+                            node_id = safe_int(raw_id)
                             props = {
+                                'id': node_id,
                                 'nombreCompleto': row[header_map['nombre']],
-                                'nacionalidad': row[header_map['nacionalidad']],
-                                # Guardar también el ID original para fallbacks en relaciones
-                                header_map['idautor']: raw_id
+                                'nacionalidad': row[header_map['nacionalidad']]
                             }
-                            if csv_id is not None:
-                                props['csvId'] = csv_id
-                            else:
-                                logging.warning(f"Carga Manual: Autor con idAutor no numérico '{raw_id}' en {filename}. Se crea sin csvId.")
+                            if node_id is None:
+                                logging.warning(f"Carga Manual: Autor con idAutor no numérico '{raw_id}' en {filename}. Omitido.")
+                                continue
                         except Exception as e:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} ({label}): {e}")
                             continue
-                        query = f"MERGE (n:{label} {{nombreCompleto: $props.nombreCompleto}}) SET n += $props"
+                        query = f"MERGE (n:{label} {{id: $props.id}}) SET n += $props"
                         session.execute_write(self._execute_write, query, {'props': props})
                         created_summary[label] += 1
                     logging.info(f"Carga Manual: Nodos '{label}' procesados desde {filename}: {created_summary[label]}")
@@ -250,27 +256,25 @@ class Database:
                     for row in reader:
                         try:
                             raw_id = row[header_map['idlibro']]
-                            csv_id = safe_int(raw_id)
+                            node_id = safe_int(raw_id)
                             raw_anno = row[header_map['anno']]
                             anno_int = safe_int(raw_anno)
                             props = {
+                                'id': node_id,
                                 'titulo': row[header_map['titulo']],
                                 'generoLiterario': row[header_map['genero']],
-                                # Guardar también el ID original para fallbacks en relaciones (IdLibro o idlibro según archivo)
-                                header_map['idlibro']: raw_id
                             }
                             if anno_int is not None:
                                 props['añoPublicacion'] = anno_int
                             else:
                                 logging.warning(f"Carga Manual: Libro '{props['titulo']}' con anno no numérico '{raw_anno}' en {filename}. Se crea sin añoPublicacion.")
-                            if csv_id is not None:
-                                props['csvId'] = csv_id
-                            else:
-                                logging.warning(f"Carga Manual: Libro '{props['titulo']}' con IdLibro no numérico '{raw_id}' en {filename}. Se crea sin csvId.")
+                            if node_id is None:
+                                logging.warning(f"Carga Manual: Libro '{props['titulo']}' con IdLibro no numérico '{raw_id}' en {filename}. Omitido.")
+                                continue
                         except Exception as e:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} ({label}): {e}")
                             continue
-                        query = f"MERGE (n:{label} {{titulo: $props.titulo}}) SET n += $props"
+                        query = f"MERGE (n:{label} {{id: $props.id}}) SET n += $props"
                         session.execute_write(self._execute_write, query, {'props': props})
                         created_summary[label] += 1
                     logging.info(f"Carga Manual: Nodos '{label}' procesados desde {filename}: {created_summary[label]}")
@@ -281,41 +285,31 @@ class Database:
                     for row in reader:
                         try:
                             raw_id = row[header_map['idclub']]
-                            csv_id = safe_int(raw_id)
+                            node_id = safe_int(raw_id)
                             props = {
+                                'id': node_id,
                                 'nombre': row[header_map['nombre']],
                                 'ubicacion': row[header_map['ubicacion']],
-                                'tematica': row[header_map['tematica']],
-                                # Guardar también el ID original para fallbacks (IdClub o idclub)
-                                header_map['idclub']: raw_id
+                                'tematica': row[header_map['tematica']]
                             }
-                            if csv_id is not None:
-                                props['csvId'] = csv_id
-                            else:
-                                logging.warning(f"Carga Manual: Club '{props['nombre']}' con IdClub no numérico '{raw_id}' en {filename}. Se crea sin csvId.")
+                            if node_id is None:
+                                logging.warning(f"Carga Manual: Club '{props['nombre']}' con IdClub no numérico '{raw_id}' en {filename}. Omitido.")
+                                continue
                         except Exception as e:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} ({label}): {e}")
                             continue
-                        # Para alinear con la carga automática y evitar colapsar clubs con el mismo nombre,
-                        # hacemos MERGE por csvId cuando esté disponible; de lo contrario, CREATE.
-                        if 'csvId' in props:
-                            query = f"MERGE (n:{label} {{csvId: $props.csvId}}) SET n += $props"
-                        else:
-                            query = f"CREATE (n:{label}) SET n += $props"
+                        query = f"MERGE (n:{label} {{id: $props.id}}) SET n += $props"
                         session.execute_write(self._execute_write, query, {'props': props})
                         created_summary[label] += 1
                     logging.info(f"Carga Manual: Nodos '{label}' procesados desde {filename}: {created_summary[label]}")
                     continue
 
-                # --- Detección y carga de relaciones por encabezados ---
-                # Función auxiliar para encontrar header con variaciones de capitalización
                 def find_header(possible_names):
                     for name in possible_names:
                         if name in headers:
                             return header_map[name]
                     return None
 
-                # Autor->Libro: buscar variaciones de idautor e idlibro
                 autor_col = find_header(['idautor', 'autor_id', 'autorid'])
                 libro_col = find_header(['idlibro', 'libro_id', 'libroid'])
                 
@@ -332,8 +326,8 @@ class Database:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} (Autor->Libro): {e}")
                             continue
                         query = (
-                            "MATCH (a:Autor) WHERE toString(coalesce(a.csvId, a.idAutor, a.IdAutor, a.id, a.Id)) = toString($from_id) "
-                            "MATCH (b:Libro) WHERE toString(coalesce(b.csvId, b.idlibro, b.IdLibro, b.id, b.Id)) = toString($to_id) "
+                            "MATCH (a:Autor) WHERE toString(a.id) = toString($from_id) "
+                            "MATCH (b:Libro) WHERE toString(b.id) = toString($to_id) "
                             "MERGE (a)-[:ESCRIBIO]->(b) "
                             "RETURN 1 AS ok"
                         )
@@ -342,11 +336,10 @@ class Database:
                             created_summary['Relaciones'] += 1
                             relaciones_creadas += 1
                         else:
-                            logging.warning(f"Carga Manual: No se encontró Autor(csvId={params['from_id']}) o Libro(csvId={params['to_id']}) para relación en {filename}")
+                            logging.warning(f"Carga Manual: No se encontró Autor(id={params['from_id']}) o Libro(id={params['to_id']}) para relación en {filename}")
                     logging.info(f"Carga Manual: {relaciones_creadas} relaciones 'ESCRIBIO' creadas desde {filename}")
                     continue
 
-                # Persona->Libro: buscar variaciones de id e idlibro
                 persona_col = find_header(['id', 'persona_id', 'personaid', 'idpersona'])
                 libro_col = find_header(['idlibro', 'libro_id', 'libroid'])
                 
@@ -363,8 +356,8 @@ class Database:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} (Persona->Libro): {e}")
                             continue
                         query = (
-                            "MATCH (a:Persona) WHERE toString(coalesce(a.csvId, a.idPersona, a.IdPersona, a.id, a.Id)) = toString($from_id) "
-                            "MATCH (b:Libro) WHERE toString(coalesce(b.csvId, b.idlibro, b.IdLibro, b.id, b.Id)) = toString($to_id) "
+                            "MATCH (a:Persona) WHERE toString(a.id) = toString($from_id) "
+                            "MATCH (b:Libro) WHERE toString(b.id) = toString($to_id) "
                             "MERGE (a)-[:LEE]->(b) "
                             "RETURN 1 AS ok"
                         )
@@ -373,11 +366,10 @@ class Database:
                             created_summary['Relaciones'] += 1
                             relaciones_creadas += 1
                         else:
-                            logging.warning(f"Carga Manual: No se encontró Persona(csvId={params['from_id']}) o Libro(csvId={params['to_id']}) para relación en {filename}")
+                            logging.warning(f"Carga Manual: No se encontró Persona(id={params['from_id']}) o Libro(id={params['to_id']}) para relación en {filename}")
                     logging.info(f"Carga Manual: {relaciones_creadas} relaciones 'LEE' creadas desde {filename}")
                     continue
 
-                # Club->Libro: buscar variaciones de idclub e idlibro
                 club_col = find_header(['idclub', 'club_id', 'clubid'])
                 libro_col = find_header(['idlibro', 'libro_id', 'libroid'])
                 
@@ -394,8 +386,8 @@ class Database:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} (Club->Libro): {e}")
                             continue
                         query = (
-                            "MATCH (a:Club) WHERE toString(coalesce(a.csvId, a.idClub, a.IdClub, a.id, a.Id)) = toString($from_id) "
-                            "MATCH (b:Libro) WHERE toString(coalesce(b.csvId, b.idlibro, b.IdLibro, b.id, b.Id)) = toString($to_id) "
+                            "MATCH (a:Club) WHERE toString(a.id) = toString($from_id) "
+                            "MATCH (b:Libro) WHERE toString(b.id) = toString($to_id) "
                             "MERGE (a)-[:RECOMIENDA]->(b) "
                             "RETURN 1 AS ok"
                         )
@@ -404,11 +396,10 @@ class Database:
                             created_summary['Relaciones'] += 1
                             relaciones_creadas += 1
                         else:
-                            logging.warning(f"Carga Manual: No se encontró Club(csvId={params['from_id']}) o Libro(csvId={params['to_id']}) para relación en {filename}")
+                            logging.warning(f"Carga Manual: No se encontró Club(id={params['from_id']}) o Libro(id={params['to_id']}) para relación en {filename}")
                     logging.info(f"Carga Manual: {relaciones_creadas} relaciones 'RECOMIENDA' creadas desde {filename}")
                     continue
 
-                # Persona->Club: buscar variaciones de idpersona e idclub
                 persona_col = find_header(['idpersona', 'persona_id', 'personaid', 'id'])
                 club_col = find_header(['idclub', 'club_id', 'clubid'])
                 
@@ -425,8 +416,8 @@ class Database:
                             logging.warning(f"Carga Manual: Fila inválida en {filename} (Persona->Club): {e}")
                             continue
                         query = (
-                            "MATCH (a:Persona) WHERE toString(coalesce(a.csvId, a.idPersona, a.IdPersona, a.id, a.Id)) = toString($from_id) "
-                            "MATCH (b:Club) WHERE toString(coalesce(b.csvId, b.idClub, b.IdClub, b.id, b.Id)) = toString($to_id) "
+                            "MATCH (a:Persona) WHERE toString(a.id) = toString($from_id) "
+                            "MATCH (b:Club) WHERE toString(b.id) = toString($to_id) "
                             "MERGE (a)-[:PERTENECE_A]->(b) "
                             "RETURN 1 AS ok"
                         )
@@ -435,7 +426,7 @@ class Database:
                             created_summary['Relaciones'] += 1
                             relaciones_creadas += 1
                         else:
-                            logging.warning(f"Carga Manual: No se encontró Persona(csvId={params['from_id']}) o Club(csvId={params['to_id']}) para relación en {filename}")
+                            logging.warning(f"Carga Manual: No se encontró Persona(id={params['from_id']}) o Club(id={params['to_id']}) para relación en {filename}")
                     logging.info(f"Carga Manual: {relaciones_creadas} relaciones 'PERTENECE_A' creadas desde {filename}")
                     continue
 
