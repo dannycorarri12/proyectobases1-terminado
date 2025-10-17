@@ -1,0 +1,123 @@
+// =============================================================================
+// PROYECTO #1 - BASES DE DATOS AVANZADAS
+// SCRIPT DE CARGA INICIAL Y CONSULTAS EN CYPHER
+// =============================================================================
+// =============================================================================
+// SECCIÓN 1: SCRIPT DE CARGA INICIAL
+// =============================================================================
+// -----------------------------------------------------------------------------
+// Paso 1: Limpiar la base de datos
+// -----------------------------------------------------------------------------
+// Borra todos los nodos y relaciones existentes.
+MATCH (n) DETACH DELETE n;
+
+// -----------------------------------------------------------------------------
+// Paso 2: Creación de Restricciones e Índices
+// -----------------------------------------------------------------------------
+// Crea reglas para asegurar la integridad de los datos y optimizar las búsquedas.
+// Nota: No se crea una restricción de unicidad para 'Club' para permitir nombres
+// duplicados en diferentes ubicaciones.
+
+CREATE CONSTRAINT persona_nombre IF NOT EXISTS FOR (p:Persona) REQUIRE p.nombreCompleto IS UNIQUE;
+CREATE CONSTRAINT libro_titulo IF NOT EXISTS FOR (l:Libro) REQUIRE l.titulo IS UNIQUE;
+CREATE CONSTRAINT autor_nombre IF NOT EXISTS FOR (a:Autor) REQUIRE a.nombreCompleto IS UNIQUE;
+
+CREATE INDEX persona_csv_id IF NOT EXISTS FOR (p:Persona) ON (p.csvId);
+CREATE INDEX libro_csv_id IF NOT EXISTS FOR (l:Libro) ON (l.csvId);
+CREATE INDEX autor_csv_id IF NOT EXISTS FOR (a:Autor) ON (a.csvId);
+CREATE INDEX club_csv_id IF NOT EXISTS FOR (c:Club) ON (c.csvId);
+
+// -----------------------------------------------------------------------------
+// Paso 3: Carga de Nodos desde Archivos CSV
+// -----------------------------------------------------------------------------
+// Carga los datos de las personas.
+LOAD CSV WITH HEADERS FROM 'file:///Persona.csv' AS row FIELDTERMINATOR ';'
+CREATE (p:Persona {nombreCompleto: row.Nombre, tipoLector: row.TipoLector, csvId: toInteger(row.id)});
+
+// Carga los datos de los autores.
+LOAD CSV WITH HEADERS FROM 'file:///Autor.csv' AS row FIELDTERMINATOR ';'
+CREATE (a:Autor {nombreCompleto: row.Nombre, nacionalidad: row.Nacionalidad, csvId: toInteger(row.idAutor)});
+
+// Carga los datos de los libros.
+LOAD CSV WITH HEADERS FROM 'file:///Libro.csv' AS row FIELDTERMINATOR ';'
+CREATE (l:Libro {titulo: row.Titulo, generoLiterario: row.Genero, añoPublicacion: toInteger(row.Anno), csvId: toInteger(row.IdLibro)});
+
+// Carga los datos de los clubes.
+LOAD CSV WITH HEADERS FROM 'file:///Club.csv' AS row FIELDTERMINATOR ';'
+CREATE (c:Club {nombre: row.Nombre, ubicacion: row.Ubicacion, tematica: row.Tematica, csvId: toInteger(row.IdClub)});
+
+// -----------------------------------------------------------------------------
+// Paso 4: Carga de Relaciones desde Archivos CSV
+// -----------------------------------------------------------------------------
+// Crea la relación (Autor)-[:ESCRIBIO]->(Libro).
+LOAD CSV WITH HEADERS FROM 'file:///Autor-libro.csv' AS row FIELDTERMINATOR ';'
+MATCH (a:Autor {csvId: toInteger(row.idAutor)})
+MATCH (l:Libro {csvId: toInteger(row.idLibro)})
+MERGE (a)-[:ESCRIBIO]->(l);
+
+// Crea la relación (Persona)-[:LEE]->(Libro).
+LOAD CSV WITH HEADERS FROM 'file:///Persona-libro.csv' AS row FIELDTERMINATOR ';'
+MATCH (p:Persona {csvId: toInteger(row.id)})
+MATCH (l:Libro {csvId: toInteger(row.idLibro)})
+MERGE (p)-[:LEE]->(l);
+
+// Crea la relación (Club)-[:RECOMIENDA]->(Libro).
+LOAD CSV WITH HEADERS FROM 'file:///Club-libro.csv' AS row FIELDTERMINATOR ';'
+MATCH (c:Club {csvId: toInteger(row.idClub)})
+MATCH (l:Libro {csvId: toInteger(row.idLibro)})
+MERGE (c)-[:RECOMIENDA]->(l);
+
+// Crea la relación (Persona)-[:PERTENECE_A]->(Club).
+LOAD CSV WITH HEADERS FROM 'file:///Persona-club2.csv' AS row FIELDTERMINATOR ';'
+MATCH (p:Persona {csvId: toInteger(row.idPersona)})
+MATCH (c:Club {csvId: toInteger(row.idClub)})
+MERGE (p)-[:PERTENECE_A]->(c);
+
+// =============================================================================
+// SECCIÓN 2: CONSULTAS DEL PROYECTO
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Consulta 1: Libros leídos por una persona.
+// -----------------------------------------------------------------------------
+// Dado el nombre de una persona, devuelve los títulos y géneros de los libros que ha leído.
+MATCH (p:Persona {nombreCompleto: $nombre})-[r:LEE]->(l:Libro)
+RETURN l.titulo AS titulo, l.generoLiterario AS genero;
+
+// -----------------------------------------------------------------------------
+// Consulta 2: Personas que pertenecen a un club.
+// -----------------------------------------------------------------------------
+// Dado el nombre de un club, devuelve el nombre de todas las personas que son miembros.
+MATCH (p:Persona)-[:PERTENECE_A]->(c:Club {nombre: $nombre})
+RETURN p.nombreCompleto AS nombre;
+
+// -----------------------------------------------------------------------------
+// Consulta 3: Personas que leen libros recomendados por su club (Lectores Activos).
+// -----------------------------------------------------------------------------
+// Devuelve las personas que han leído 3 o más libros que son recomendados
+// por un mismo club al que pertenecen.
+MATCH (p:Persona)-[:LEE]->(l:Libro)<-[:RECOMIENDA]-(c:Club)
+WITH p, c, count(l) AS librosRecomendadosLeidos
+WHERE librosRecomendadosLeidos >= 3
+RETURN p.nombreCompleto AS persona, c.nombre AS club;
+
+// -----------------------------------------------------------------------------
+// Consulta 4: Personas que pertenecen a más de un club.
+// -----------------------------------------------------------------------------
+// Devuelve el nombre de las personas que son miembros de más de un club,
+// y lista los nombres de los clubes a los que pertenecen.
+MATCH (p:Persona)-[:PERTENECE_A]->(c:Club)
+WITH p, count(c) AS numeroClubes
+WHERE numeroClubes > 1
+MATCH (p)-[:PERTENECE_A]->(club:Club)
+RETURN p.nombreCompleto AS persona, collect(club.nombre) AS clubes;
+
+// -----------------------------------------------------------------------------
+// Consulta 5: Los 3 libros más populares.
+// -----------------------------------------------------------------------------
+// Devuelve los títulos de los 3 libros más leídos por todas las personas,
+// junto con la cantidad de lectores de cada uno.
+MATCH (p:Persona)-[:LEE]->(l:Libro)
+RETURN l.titulo AS titulo, count(p) AS lectores
+ORDER BY lectores DESC
+LIMIT 3;
